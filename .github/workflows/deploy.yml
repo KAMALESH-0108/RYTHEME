@@ -1,0 +1,119 @@
+name: RYTHEME Full-Stack CI/CD Deployment
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  # ============================================================================
+  # Job 1: Build, Test & Validate All 3 Layers
+  # ============================================================================
+  build-and-test:
+    name: Test & Build Frontend, Backend and API
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Check out repository
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------------
+      # 1. Setup & Build Flutter Web Frontend
+      # ------------------------------------------------------------------------
+      - name: 🎯 Set up Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: 📦 Install Flutter Dependencies
+        run: flutter pub get
+
+      - name: 🔍 Static Analysis for Flutter
+        run: flutter analyze --no-fatal-infos
+
+      - name: 🏗️ Build Flutter Web Bundle
+        run: flutter build web --release
+
+      # ------------------------------------------------------------------------
+      # 2. Setup & Build JioSaavn API Engine
+      # ------------------------------------------------------------------------
+      - name: 🟢 Set up Node.js for JioSaavn API
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: 'jiosaavn-api/package-lock.json'
+
+      - name: 📦 Install & Build JioSaavn API
+        working-directory: ./jiosaavn-api
+        run: |
+          npm ci
+          npm run build
+
+      # ------------------------------------------------------------------------
+      # 3. Setup & Test Node.js Express Backend
+      # ------------------------------------------------------------------------
+      - name: 📦 Install Backend Dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: 🧪 Verify Backend Server Syntax & Startup
+        working-directory: ./backend
+        run: node -c server.js
+
+  # ============================================================================
+  # Job 2: Build & Push Docker Image / Deploy to Cloud
+  # ============================================================================
+  deploy-docker:
+    name: Build & Publish Container (GHCR / Cloud Deployment)
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: 📥 Check out repository
+        uses: actions/checkout@v4
+
+      - name: 🐳 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🔑 Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🏷️ Extract Metadata & Tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+
+      - name: 🚀 Build and Push Unified Production Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Optional: Trigger Render Deploy Hook if configured in GitHub Secrets
+      - name: 📡 Trigger Render Deploy Webhook (Optional)
+        if: env.RENDER_DEPLOY_HOOK != ''
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          curl -X POST "$RENDER_DEPLOY_HOOK"

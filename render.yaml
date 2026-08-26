@@ -1,0 +1,26 @@
+services:
+  # ============================================================================
+  # Render Web Service (Unified Docker Container)
+  # ============================================================================
+  - type: web
+    name: rytheme-music-app
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: oregon
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: SUPABASE_URL
+        value: https://dpnxxrmvahyfzpfwhrey.supabase.co
+      - key: SUPABASE_ANON_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRwbnh4cm12YWh5ZnpwZndocmV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc3MDU2MDgsImV4cCI6MjEwMzI4MTYwOH0.IfsjEJNJ1GQTFluzdhf3ccc3xb-1voAJTJpYX4krmVY
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRwbnh4cm12YWh5ZnpwZndocmV5Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NzcwNTYwOCwiZXhwIjoyMTAzMjgxNjA4fQ.s7jfi3mOHmM-bbz9CcRKFXZytL7Uz6xQRZccdyWGDpc
+      - key: JIOSAAVN_API_URL
+        value: http://localhost:3000
+      - key: CORS_ORIGIN
+        value: "*"
