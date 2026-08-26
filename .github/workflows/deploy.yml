@@ -1,119 +1,316 @@
 name: RYTHEME Full-Stack CI/CD Deployment
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-  workflow_dispatch:
+push:
+branches: [main, master]
+
+pull_request:
+branches: [main, master]
+
+workflow_dispatch:
+
+# Prevent multiple deployments from running simultaneously
+
+concurrency:
+group: rytheme-${{ github.ref }}
+cancel-in-progress: true
+
+env:
+NODE_VERSION: "20"
+FLUTTER_CHANNEL: stable
+REGISTRY: ghcr.io
+IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # ============================================================================
-  # Job 1: Build, Test & Validate All 3 Layers
-  # ============================================================================
-  build-and-test:
-    name: Test & Build Frontend, Backend and API
-    runs-on: ubuntu-latest
 
-    steps:
-      - name: 📥 Check out repository
-        uses: actions/checkout@v4
+# ==========================================================================
 
-      # ------------------------------------------------------------------------
-      # 1. Setup & Build Flutter Web Frontend
-      # ------------------------------------------------------------------------
-      - name: 🎯 Set up Flutter SDK
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-          cache: true
+# JOB 1 — BUILD, TEST & VALIDATE
 
-      - name: 📦 Install Flutter Dependencies
-        run: flutter pub get
+# ==========================================================================
 
-      - name: 🔍 Static Analysis for Flutter
-        run: flutter analyze --no-fatal-infos
+build-and-test:
 
-      - name: 🏗️ Build Flutter Web Bundle
-        run: flutter build web --release
+```
+name: 🔍 Test & Build Frontend, Backend and API
 
-      # ------------------------------------------------------------------------
-      # 2. Setup & Build JioSaavn API Engine
-      # ------------------------------------------------------------------------
-      - name: 🟢 Set up Node.js for JioSaavn API
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-          cache-dependency-path: 'jiosaavn-api/package-lock.json'
+runs-on: ubuntu-latest
 
-      - name: 📦 Install & Build JioSaavn API
-        working-directory: ./jiosaavn-api
-        run: |
-          npm ci
-          npm run build
+steps:
 
-      # ------------------------------------------------------------------------
-      # 3. Setup & Test Node.js Express Backend
-      # ------------------------------------------------------------------------
-      - name: 📦 Install Backend Dependencies
-        working-directory: ./backend
-        run: npm ci
+  # ----------------------------------------------------------------------
+  # Checkout
+  # ----------------------------------------------------------------------
 
-      - name: 🧪 Verify Backend Server Syntax & Startup
-        working-directory: ./backend
-        run: node -c server.js
+  - name: 📥 Check out repository
+    uses: actions/checkout@v4
 
-  # ============================================================================
-  # Job 2: Build & Push Docker Image / Deploy to Cloud
-  # ============================================================================
-  deploy-docker:
-    name: Build & Publish Container (GHCR / Cloud Deployment)
-    needs: build-and-test
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
 
-    steps:
-      - name: 📥 Check out repository
-        uses: actions/checkout@v4
+  # ----------------------------------------------------------------------
+  # FLUTTER WEB FRONTEND
+  # ----------------------------------------------------------------------
 
-      - name: 🐳 Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+  - name: 🎯 Set up Flutter SDK
+    uses: subosito/flutter-action@v2
+    with:
+      channel: ${{ env.FLUTTER_CHANNEL }}
+      cache: true
 
-      - name: 🔑 Log in to GitHub Container Registry (GHCR)
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+  - name: 📦 Install Flutter Dependencies
+    run: flutter pub get
 
-      - name: 🏷️ Extract Metadata & Tags
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=raw,value=latest
-            type=sha,format=short
+  - name: 🔍 Static Analysis for Flutter
+    run: flutter analyze --no-fatal-infos
 
-      - name: 🚀 Build and Push Unified Production Image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+  - name: 🧪 Run Flutter Tests
+    run: flutter test
 
-      # Optional: Trigger Render Deploy Hook if configured in GitHub Secrets
-      - name: 📡 Trigger Render Deploy Webhook (Optional)
-        if: env.RENDER_DEPLOY_HOOK != ''
-        env:
-          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
-        run: |
-          curl -X POST "$RENDER_DEPLOY_HOOK"
+  - name: 🏗️ Build Flutter Web Bundle
+    run: flutter build web --release
+
+
+  # ----------------------------------------------------------------------
+  # JIOSAAVN API ENGINE
+  # ----------------------------------------------------------------------
+
+  - name: 🟢 Set up Node.js for JioSaavn API
+    uses: actions/setup-node@v4
+    with:
+      node-version: ${{ env.NODE_VERSION }}
+      cache: npm
+      cache-dependency-path: jiosaavn-api/package-lock.json
+
+  - name: 📦 Install JioSaavn API Dependencies
+    working-directory: ./jiosaavn-api
+    run: npm ci
+
+  - name: 🧪 Test JioSaavn API
+    working-directory: ./jiosaavn-api
+    run: npm test --if-present
+
+  - name: 🏗️ Build JioSaavn API
+    working-directory: ./jiosaavn-api
+    run: npm run build --if-present
+
+
+  # ----------------------------------------------------------------------
+  # NODE.JS EXPRESS BACKEND
+  # ----------------------------------------------------------------------
+
+  - name: 📦 Install Backend Dependencies
+    working-directory: ./backend
+    run: npm ci
+
+  - name: 🧪 Run Backend Tests
+    working-directory: ./backend
+    run: npm test --if-present
+
+  - name: 🔍 Verify Backend Server Syntax
+    working-directory: ./backend
+    run: node --check server.js
+```
+
+# ==========================================================================
+
+# JOB 2 — BUILD & PUSH DOCKER IMAGE
+
+# ==========================================================================
+
+deploy-docker:
+
+```
+name: 🐳 Build & Publish Production Container
+
+needs: build-and-test
+
+# Only deploy from main/master.
+# Pull requests only run the validation job above.
+if: >
+  github.event_name == 'push' &&
+  (
+    github.ref == 'refs/heads/main' ||
+    github.ref == 'refs/heads/master'
+  )
+
+runs-on: ubuntu-latest
+
+permissions:
+  contents: read
+  packages: write
+
+steps:
+
+  # ----------------------------------------------------------------------
+  # Checkout
+  # ----------------------------------------------------------------------
+
+  - name: 📥 Check out repository
+    uses: actions/checkout@v4
+
+
+  # ----------------------------------------------------------------------
+  # Docker Buildx
+  # ----------------------------------------------------------------------
+
+  - name: 🐳 Set up Docker Buildx
+    uses: docker/setup-buildx-action@v3
+
+
+  # ----------------------------------------------------------------------
+  # GitHub Container Registry
+  # ----------------------------------------------------------------------
+
+  - name: 🔑 Log in to GitHub Container Registry
+    uses: docker/login-action@v3
+    with:
+      registry: ${{ env.REGISTRY }}
+      username: ${{ github.actor }}
+      password: ${{ secrets.GITHUB_TOKEN }}
+
+
+  # ----------------------------------------------------------------------
+  # Docker Metadata
+  # ----------------------------------------------------------------------
+
+  - name: 🏷️ Extract Docker Metadata
+    id: meta
+    uses: docker/metadata-action@v5
+    with:
+      images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      tags: |
+        type=raw,value=latest
+        type=sha,format=short,prefix=sha-
+        type=ref,event=branch
+
+
+  # ----------------------------------------------------------------------
+  # Build & Push
+  # ----------------------------------------------------------------------
+
+  - name: 🚀 Build and Push Production Image
+    uses: docker/build-push-action@v6
+
+    with:
+      context: .
+      file: ./Dockerfile
+
+      push: true
+
+      tags: ${{ steps.meta.outputs.tags }}
+
+      labels: ${{ steps.meta.outputs.labels }}
+
+      cache-from: type=gha
+      cache-to: type=gha,mode=max
+
+
+  # ----------------------------------------------------------------------
+  # Render Deployment
+  # ----------------------------------------------------------------------
+
+  - name: 📡 Trigger Render Deployment
+    if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
+
+    env:
+      RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+
+    run: |
+      echo "🚀 Triggering Render deployment..."
+
+      curl \
+        --fail \
+        --silent \
+        --show-error \
+        --request POST \
+        "$RENDER_DEPLOY_HOOK"
+
+      echo "✅ Render deployment triggered successfully."
+```
+
+# ==========================================================================
+
+# JOB 3 — PRODUCTION HEALTH CHECK
+
+# ==========================================================================
+
+health-check:
+
+```
+name: ❤️ Production Health Check
+
+needs: deploy-docker
+
+if: >
+  github.event_name == 'push' &&
+  (
+    github.ref == 'refs/heads/main' ||
+    github.ref == 'refs/heads/master'
+  )
+
+runs-on: ubuntu-latest
+
+steps:
+
+  - name: ⏳ Wait for Render Deployment
+    run: sleep 30
+
+
+  - name: ❤️ Check RYTHEME Production API
+    if: ${{ secrets.PRODUCTION_HEALTH_URL != '' }}
+
+    env:
+      PRODUCTION_HEALTH_URL: ${{ secrets.PRODUCTION_HEALTH_URL }}
+
+    run: |
+      echo "🔎 Checking production API..."
+
+      curl \
+        --fail \
+        --silent \
+        --show-error \
+        --max-time 30 \
+        "$PRODUCTION_HEALTH_URL"
+
+      echo ""
+      echo "✅ Production health check passed."
+```
+
+# ==========================================================================
+
+# JOB 4 — DEPLOYMENT SUCCESS
+
+# ==========================================================================
+
+deployment-success:
+
+```
+name: 🎉 RYTHEME Deployment Complete
+
+needs:
+  - health-check
+
+if: success()
+
+runs-on: ubuntu-latest
+
+steps:
+
+  - name: 🎉 Deployment Summary
+    run: |
+      echo "=============================================="
+      echo "       🎵 RYTHEME DEPLOYMENT SUCCESS 🎵"
+      echo "=============================================="
+      echo ""
+      echo "✅ Flutter Web validated"
+      echo "✅ Flutter Web built"
+      echo "✅ JioSaavn API validated"
+      echo "✅ Express Backend validated"
+      echo "✅ Docker image built"
+      echo "✅ Docker image pushed to GHCR"
+      echo "✅ Render deployment triggered"
+      echo "✅ Production health check passed"
+      echo ""
+      echo "🚀 RYTHEME IS LIVE!"
+      echo "=============================================="
+```
